@@ -6,22 +6,22 @@ import (
   "net/http"
   "log"
   "strconv"
+  "strings"
 )
 
 var baseURL = "https://kr.indeed.com/jobs?q=javascript";
 
 func main() {
-  itemCount := getPagesItemCount();
+  pages := getPagesItemCount();
 
-  for i:=0; ; i++ {
-    if getPage(i, itemCount) != false {
-      break;
-    }
+  for i:=0; i<pages; i++ {
+    //exrtact func(http.Get) is usynchronized func so it and for func can't be come together
+    getPage(i)
   }
 }
 
 //form the url of each page extracted by getPages func and by using them exrtact extract more info
-func getPage(page int, itemCount int) bool {
+func getPage(page int) {
   pageURL := "";
   if page != 0{
     pageURL = baseURL + "&start=" + strconv.Itoa(page * 10);
@@ -48,11 +48,6 @@ func getPage(page int, itemCount int) bool {
     
     fmt.Println(id, title, company, location);
   })
-    //check is LastPage
-  if cards.Length() != itemCount {
-    return true;
-  }
-  return false;
 }
 
 //Get html file of baseURL(By goquery) and Exract page count
@@ -63,10 +58,19 @@ func getPagesItemCount() int{
   checkStatus(res);
   doc, err := goquery.NewDocumentFromReader(res.Body)
   checkErr(err);
-  //get num of selections
-  itemCount := doc.Find(".tapItem").Length();
+  //CardsInPage
+  crdpCount := doc.Find(".tapItem").Length()
 
-  return itemCount;
+  //AllCards
+  slice := strings.Split(doc.Find("div#searchCountPages").Text(), " ");
+  lastElement := slice[len(slice)-1]; //페이지수 + 건
+  fmt.Println(lastElement);
+  cardCountStr := lastElement[0 : len(lastElement) - 3]; //"건" 추출
+  acrdCount, _ := strconv.Atoi(cardCountStr);
+
+  //Pages
+  pages := int(acrdCount / crdpCount) + ((acrdCount % crdpCount) % 2)
+  return pages;
 }
 
 func checkErr(err error){
