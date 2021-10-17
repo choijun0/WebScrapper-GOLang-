@@ -9,6 +9,7 @@ import (
   "strings"
   "os"
   "encoding/csv"
+  "errors"
 )
 
 var baseURL = "https://kr.indeed.com/jobs?q=javascript";
@@ -23,38 +24,29 @@ type extractedInfo struct {
 } 
 
 func main() {
-  //pages := getPages();
+  pages := getPages();
+  fmt.Println(pages)
   var jobsInfo []extractedInfo
-  for i:=0; i<5; i++ {
-    //exrtact func(http.Get) is usynchronized func so it and for func can't be come together
-    jobsInfo=append(jobsInfo, getPage(i)...); //the way spread array in go
+  jobsInfoConChannel := make(chan []extractedInfo)
+
+  //Request
+  for i:=0; i<pages; i++ {
+    go getPage(i, jobsInfoConChannel)
+  }
+  //Reciever
+  for i:=0; i<pages; i++{
+    jobsInfo=append(jobsInfo, <- jobsInfoConChannel...);
   }
   writeJobs(jobsInfo);
 }
 
-func writeJobs(jobsInfo []extractedInfo) {
-  file, err := os.Create("jobs.csv");
-  checkErr(err);
-
-  w:= csv.NewWriter(file);
-  defer w.Flush()
-
-  headers := []string{"URL", "TITLE", "COMPANY", "LOCATION", "SALARY", "SUMMARY"}
-  w.Write(headers);
-
-  for _, job := range jobsInfo {
-
-    jobSlice := []string{"https://kr.indeed.com/jobs?q=javascript&vjk=" + job.id[4 : len(job.id) -1], job.title,job.company, job.location, job.salary, job.summary}
-    err := w.Write(jobSlice)
-    checkErr(err)
-  }
-}
-
 
 //form the url of each page extracted by getPages func and by using them exrtact extract more info
-func getPage(page int) []extractedInfo {
+func getPage(page int, c chan<- []extractedInfo) {
   pageURL := "";
   var jobInfoCon []extractedInfo;
+  jobInfoChannel := make(chan extractedInfo);
+
   if page != 0{
     pageURL = baseURL + "&start=" + strconv.Itoa(page * 10);
   } else {
@@ -67,31 +59,38 @@ func getPage(page int) []extractedInfo {
   checkStatus(res);
   doc, _ := goquery.NewDocumentFromReader(res.Body);
   cards := doc.Find(".tapItem")
+  //Request
   cards.Each(func(i int, card *goquery.Selection){
-    jobInfo := extractJonInfo(card);
-    jobInfoCon = append(jobInfoCon, jobInfo);
+    go extractJonInfo(card, jobInfoChannel)
   })
+  //Receive
+  for i:=0; i<cards.Length(); i++ {
+    jobInfoCon = append(jobInfoCon, <- jobInfoChannel);
+  }
 
-  return jobInfoCon;
+  c <- jobInfoCon;
 }
 
 
-func extractJonInfo(card *goquery.Selection) extractedInfo{
+func extractJonInfo(card *goquery.Selection, c chan<- extractedInfo) {
     id, _ := card.Attr("id");
 
     title, _ := card.Find(".jobTitle>span").Attr("title");
     title = cleaningString(title);
-    
-    company_location := card.Find(".company_location>pre");
-    company := cleaningString(company_location.Find(".companyName>a").Text())
-		location := cleaningString(company_location.Find(".companyLocation").Text())
 
-    //can't extract!!!
-    summary := cleaningString(card.Find(".snippet").Text())
+    //companyName Element is exist in both span>a and span only
+    companyElement := card.Find(".companyName")  
+    if companyElement.Length() == 0 {
+      companyElement = card.Find(".companyName>a")
+    }
+    company := cleaningString(companyElement.Text());
+    
+		location := cleaningString(card.Find(".companyLocation").Text())
+
+    summary := cleaningString(card.Find(".job-snippet").Text())
     
     salary := cleaningString(card.Find(".salary-snippet-container>span").Text())
-
-    return extractedInfo{
+    c <- extractedInfo{
       id: id, 
       title: title,
       company: company, 
@@ -121,9 +120,13 @@ func getPages() int{
   crdpCount := doc.Find(".tapItem").Length()
 
   //AllCards
-  slice := strings.Split(doc.Find("div#searchCountPages").Text(), " ");
+  pageCountElement := doc.Find("div#searchCountPages");
+  if pageCountElement.Length() == 0 {
+    checkErr(errors.New("can't find page count"));
+  }
+  slice := strings.Split(pageCountElement.Text(), " ");
+
   lastElement := slice[len(slice)-1]; //페이지수 + 건
-  fmt.Println(lastElement);
   cardCountStr := lastElement[0 : len(lastElement) - 3]; //"건" 추출
   acrdCount, _ := strconv.Atoi(cardCountStr);
 
@@ -142,4 +145,24 @@ func checkStatus(res *http.Response) {
   if res.StatusCode != 200 {
     log.Fatalln("Request Failed statusCode :", res.StatusCode);
   }
+}
+
+func writeJobs(jobsInfo []extractedInfo) {
+  file, err := os.Create("jobs.csv");
+  checkErr(err);
+
+  w:= csv.NewWriter(file);
+  defer w.Flush()
+
+  headers := []string{"URL", "TITLE", "COMPANY", "LOCATION", "SALARY", "SUMMARY"}
+  w.Write(headers);
+  for _, job := range jobsInfo {
+    go writeTomain(w, job);
+  }
+}
+
+func writeTomain(w *csv.Writer, job extractedInfo) {
+  jobSlice := []string{"https://kr.indeed.com/jobs?q=javascript&vjk=" + job.id[4 : len(job.id) -1], job.title,job.company, job.location, job.salary, job.summary}
+  err := w.Write(jobSlice)
+  checkErr(err)
 }
