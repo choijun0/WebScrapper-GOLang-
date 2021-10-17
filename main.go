@@ -10,9 +10,9 @@ import (
   "os"
   "encoding/csv"
   "errors"
+  "github.com/labstack/echo/v4"
 )
 
-var baseURL = "https://kr.indeed.com/jobs?q=javascript";
 
 type extractedInfo struct {
   id string
@@ -23,26 +23,31 @@ type extractedInfo struct {
   summary string 
 } 
 
-func main() {
-  pages := getPages();
+//Scrapper Package
+
+func Scrape(term string) {
+  baseURL := "https://kr.indeed.com/jobs?q=" + term;
+  pages := getPages(baseURL);
   fmt.Println(pages)
   var jobsInfo []extractedInfo
   jobsInfoConChannel := make(chan []extractedInfo)
 
   //Request
   for i:=0; i<pages; i++ {
-    go getPage(i, jobsInfoConChannel)
+    go getPage(i, baseURL, jobsInfoConChannel)
   }
   //Reciever
   for i:=0; i<pages; i++{
     jobsInfo=append(jobsInfo, <- jobsInfoConChannel...);
   }
-  writeJobs(jobsInfo);
+  fmt.Println("Done. extracted "+strconv.Itoa(pages));
+
+  writeJobs(jobsInfo, baseURL);
 }
 
 
 //form the url of each page extracted by getPages func and by using them exrtact extract more info
-func getPage(page int, c chan<- []extractedInfo) {
+func getPage(page int, baseURL string, c chan<- []extractedInfo) {
   pageURL := "";
   var jobInfoCon []extractedInfo;
   jobInfoChannel := make(chan extractedInfo);
@@ -76,20 +81,20 @@ func extractJonInfo(card *goquery.Selection, c chan<- extractedInfo) {
     id, _ := card.Attr("id");
 
     title, _ := card.Find(".jobTitle>span").Attr("title");
-    title = cleaningString(title);
+    title = CleaningString(title);
 
     //companyName Element is exist in both span>a and span only
     companyElement := card.Find(".companyName")  
     if companyElement.Length() == 0 {
       companyElement = card.Find(".companyName>a")
     }
-    company := cleaningString(companyElement.Text());
+    company := CleaningString(companyElement.Text());
     
-		location := cleaningString(card.Find(".companyLocation").Text())
+		location := CleaningString(card.Find(".companyLocation").Text())
 
-    summary := cleaningString(card.Find(".job-snippet").Text())
+    summary := CleaningString(card.Find(".job-snippet").Text())
     
-    salary := cleaningString(card.Find(".salary-snippet-container>span").Text())
+    salary := CleaningString(card.Find(".salary-snippet-container>span").Text())
     c <- extractedInfo{
       id: id, 
       title: title,
@@ -99,17 +104,15 @@ func extractJonInfo(card *goquery.Selection, c chan<- extractedInfo) {
       salary: salary}
 }
 
-func cleaningString(str string) string{
+func CleaningString(str string) string{
   //#.1 Trimspace를 이용하여 문자열의 양옆 공백제거
   //#.2 Fields 를 이용해 text만을 요소로하는 문자배열생성
   //#.3 Join을 이용해 " "을 사이에두고 문자배열을 문자열로 합침
   return strings.Join(strings.Fields(strings.TrimSpace(str))," ");
 }
 
-
-
 //Get html file of baseURL(By goquery) and Exract page count
-func getPages() int{
+func getPages(baseURL string) int{
   res, err := http.Get(baseURL);
   defer res.Body.Close()
   checkErr(err);
@@ -147,7 +150,7 @@ func checkStatus(res *http.Response) {
   }
 }
 
-func writeJobs(jobsInfo []extractedInfo) {
+func writeJobs(jobsInfo []extractedInfo, baseURL string) {
   file, err := os.Create("jobs.csv");
   checkErr(err);
 
@@ -157,12 +160,46 @@ func writeJobs(jobsInfo []extractedInfo) {
   headers := []string{"URL", "TITLE", "COMPANY", "LOCATION", "SALARY", "SUMMARY"}
   w.Write(headers);
   for _, job := range jobsInfo {
-    go writeTomain(w, job);
+    go writeToMain(w, job, baseURL);
   }
 }
 
-func writeTomain(w *csv.Writer, job extractedInfo) {
-  jobSlice := []string{"https://kr.indeed.com/jobs?q=javascript&vjk=" + job.id[4 : len(job.id) -1], job.title,job.company, job.location, job.salary, job.summary}
+func writeToMain(w *csv.Writer, job extractedInfo, baseURL string) {
+  jobSlice := []string{baseURL + "&vjk=" + job.id[4 : len(job.id) -1], job.title,job.company, job.location, job.salary, job.summary}
   err := w.Write(jobSlice)
   checkErr(err)
 }
+
+//##########################################################################
+
+var fileName string = "jobs.csv"
+
+func main() {
+  e := echo.New()
+	e.GET("/", handleHome)
+	e.POST("/scrape", handleScrape)
+	e.Logger.Fatal(e.Start(":1323"))
+}
+
+func handleHome(c echo.Context) error{
+  return c.File("home.html")
+}
+
+func handleScrape(c echo.Context) error {
+  defer os.Remove(fileName)
+	term := strings.ToLower(CleaningString(c.FormValue("term")))
+  Scrape(term);
+	return c.Attachment(fileName, fileName) 
+}
+
+
+
+
+
+
+
+
+
+
+
+
