@@ -28,7 +28,6 @@ type extractedInfo struct {
 func Scrape(term string) {
   baseURL := "https://kr.indeed.com/jobs?q=" + term;
   pages := getPages(baseURL);
-  fmt.Println(pages)
   var jobsInfo []extractedInfo
   jobsInfoConChannel := make(chan []extractedInfo)
 
@@ -36,7 +35,7 @@ func Scrape(term string) {
   for i:=0; i<pages; i++ {
     go getPage(i, baseURL, jobsInfoConChannel)
   }
-  //Reciever
+  //Recieve
   for i:=0; i<pages; i++{
     jobsInfo=append(jobsInfo, <- jobsInfoConChannel...);
   }
@@ -152,6 +151,7 @@ func checkStatus(res *http.Response) {
 
 func writeJobs(jobsInfo []extractedInfo, baseURL string) {
   file, err := os.Create("jobs.csv");
+  finish := make(chan bool);
   checkErr(err);
 
   w:= csv.NewWriter(file);
@@ -160,14 +160,20 @@ func writeJobs(jobsInfo []extractedInfo, baseURL string) {
   headers := []string{"URL", "TITLE", "COMPANY", "LOCATION", "SALARY", "SUMMARY"}
   w.Write(headers);
   for _, job := range jobsInfo {
-    go writeToMain(w, job, baseURL);
+    go writeToMain(w, job, finish, baseURL);
+  }
+
+  //block flush when writing isn't done.
+  for i:=0; i<len(jobsInfo); i++ {
+    <- finish 
   }
 }
 
-func writeToMain(w *csv.Writer, job extractedInfo, baseURL string) {
+func writeToMain(w *csv.Writer, job extractedInfo, c chan bool, baseURL string) {
   jobSlice := []string{baseURL + "&vjk=" + job.id[4 : len(job.id) -1], job.title,job.company, job.location, job.salary, job.summary}
   err := w.Write(jobSlice)
   checkErr(err)
+  c <- true;
 }
 
 //##########################################################################
@@ -178,7 +184,7 @@ func main() {
   e := echo.New()
 	e.GET("/", handleHome)
 	e.POST("/scrape", handleScrape)
-	e.Logger.Fatal(e.Start(":1323"))
+	e.Logger.Fatal(e.Start(":1123"))
 }
 
 func handleHome(c echo.Context) error{
@@ -186,20 +192,8 @@ func handleHome(c echo.Context) error{
 }
 
 func handleScrape(c echo.Context) error {
-  defer os.Remove(fileName)
+  //defer os.Remove(fileName)
 	term := strings.ToLower(CleaningString(c.FormValue("term")))
   Scrape(term);
 	return c.Attachment(fileName, fileName) 
 }
-
-
-
-
-
-
-
-
-
-
-
-
